@@ -92,7 +92,7 @@ class PublicKey(object):
                              self.algo_id)  # public key algorithm ID
         oid = util.prefix_len('>B', self.curve_info['oid'])
         blob = self.curve_info['serialize'](self.verifying_key)
-        return header + oid + blob
+        return header + oid + blob + b'\x03\x01\x08\x07'
 
     def data_to_hash(self):
         """Data for digest computation."""
@@ -185,32 +185,19 @@ class Signer(object):
 
     def subkey(self):
         """Export a subkey to `self.user_id` GPG primary key."""
+        self.pubkey.algo_id = 18
         subkey_packet = proto.packet(tag=14, blob=self.pubkey.data())
         primary = decode.load_from_gpg(self.user_id)
         log.info('adding subkey to primary GPG key "%s" (%s)',
                  self.user_id, util.hexlify(primary['key_id']))
         data_to_sign = primary['_to_hash'] + self.pubkey.data_to_hash()
 
-        # Primary Key Binding Signature
-        hashed_subpackets = [
-            proto.subpacket_time(self.pubkey.created)]  # signature time
-        unhashed_subpackets = [
-            proto.subpacket(16, self.pubkey.key_id())]  # issuer key id
-        log.info('confirm signing subkey with hardware device')
-        embedded_sig = _make_signature(signer_func=self.conn.sign,
-                                       data_to_sign=data_to_sign,
-                                       public_algo=self.pubkey.algo_id,
-                                       sig_type=0x19,
-                                       hashed_subpackets=hashed_subpackets,
-                                       unhashed_subpackets=unhashed_subpackets)
-
         # Subkey Binding Signature
         hashed_subpackets = [
             proto.subpacket_time(self.pubkey.created),  # signature time
-            proto.subpacket_byte(0x1B, 2)]  # key flags (certify & sign)
+            proto.subpacket_byte(0x1B, 4 | 8)]  # key flags (certify & sign)
         unhashed_subpackets = [
             proto.subpacket(16, primary['key_id']),  # issuer key id
-            proto.subpacket(32, embedded_sig),
             proto.CUSTOM_SUBPACKET]
         log.info('confirm signing subkey with gpg-agent')
         gpg_agent = AgentSigner(self.user_id)

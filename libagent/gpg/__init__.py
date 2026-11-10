@@ -147,9 +147,17 @@ def run_init(device_type, args):
     # Prepare the key before making any changes
     fingerprints, public_key_bytes = export_public_key(device_type, args)
 
-    os.makedirs(homedir, mode=0o700)
-
     agent_path = util.which('{}-gpg-agent'.format(device_name))
+    setup_homedir(homedir=homedir, agent_cmd=[agent_path],
+                  default_key=fingerprints[0], args=args)
+    import_public_key(homedir=homedir, public_key_bytes=public_key_bytes,
+                      fingerprint=fingerprints[0], user_id=args.user_id,
+                      verbose=args.verbose)
+
+
+def setup_homedir(homedir, agent_cmd, default_key, args):
+    """Create GPG home directory, using `agent_cmd` as its gpg-agent."""
+    os.makedirs(homedir, mode=0o700)
 
     # Prepare GPG agent invocation script (to pass the PATH from environment).
     with open(os.path.join(homedir, ('run-agent.sh'
@@ -163,7 +171,9 @@ export PATH="{0}"
             f.write(r"""@echo off
 set PATH={0}
 """.format(util.escape_cmd_win(os.environ['PATH'])))
-        f.write('"{0}" -vv'.format(util.escape_cmd_quotes(agent_path)))
+        f.write(' '.join('"{0}"'.format(util.escape_cmd_quotes(arg))
+                         for arg in agent_cmd))
+        f.write(' -vv')
         for arg in ['pin_entry_binary', 'passphrase_entry_binary', 'cache_expiry_seconds']:
             if hasattr(args, arg):
                 f.write(' "--{0}={1}"'.format(arg.replace('_', '-'),
@@ -181,7 +191,7 @@ set PATH={0}
 agent-program "{0}"
 personal-digest-preferences SHA512
 default-key {1}
-""".format(util.escape_cmd_quotes(run_agent_script), fingerprints[0]))
+""".format(util.escape_cmd_quotes(run_agent_script), default_key))
 
     # Prepare a helper script for setting up the new identity
     with open(os.path.join(homedir, 'env'), 'w') as f:
@@ -198,8 +208,10 @@ fi
 """.format(homedir))
     os.chmod(f.name, 0o700)
 
-    # Generate new GPG identity and import into GPG keyring
-    verbosity = ('-' + ('v' * args.verbose)) if args.verbose else '--quiet'
+
+def import_public_key(homedir, public_key_bytes, fingerprint, user_id, verbose):
+    """Import public key into GPG keyring, with "ultimate" owner trust."""
+    verbosity = ('-' + ('v' * verbose)) if verbose else '--quiet'
     check_call(keyring.gpg_command(['--homedir', homedir, verbosity,
                                     '--import']),
                input_bytes=public_key_bytes.encode())
@@ -207,11 +219,11 @@ fi
     # Make new GPG identity with "ultimate" trust (via its fingerprint)
     check_call(keyring.gpg_command(['--homedir', homedir,
                                     '--import-ownertrust']),
-               input_bytes=(fingerprints[0] + ':6\n').encode())
+               input_bytes=(fingerprint + ':6\n').encode())
 
     # Load agent and make sure it responds with the new identity
     check_call(keyring.gpg_command(['--homedir', homedir,
-                                    '--list-secret-keys', args.user_id]))
+                                    '--list-secret-keys', user_id]))
 
 
 def run_unlock(device_type, args):

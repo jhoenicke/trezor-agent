@@ -48,8 +48,14 @@ def create_primary(user_id, pubkey, signer_func, secret_bytes=b''):
     return pubkey_packet + user_id_packet + sign_packet
 
 
-def create_subkey(primary_bytes, subkey, signer_func, secret_bytes=b''):
-    """Export new subkey to GPG primary key."""
+def create_subkey(primary_bytes, subkey, signer_func, secret_bytes=b'',
+                  subkey_signer_func=None):
+    """Export new subkey to GPG primary key.
+
+    `signer_func` signs as the primary key, `subkey_signer_func` (defaults to
+    `signer_func`) creates the subkey's back-signature for signing subkeys.
+    """
+    # pylint: disable=too-many-locals
     subkey_packet = protocol.packet(tag=(7 if secret_bytes else 14),
                                     blob=subkey.data() + secret_bytes)
     packets = list(decode.parse_packets(io.BytesIO(primary_bytes)))
@@ -66,7 +72,7 @@ def create_subkey(primary_bytes, subkey, signer_func, secret_bytes=b''):
         unhashed_subpackets = [
             protocol.subpacket(16, subkey.key_id())]  # issuer key id
         embedded_sig = protocol.make_signature(
-            signer_func=signer_func,
+            signer_func=subkey_signer_func or signer_func,
             data_to_sign=data_to_sign,
             public_algo=subkey.algo_id,
             sig_type=0x19,
